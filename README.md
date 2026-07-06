@@ -96,6 +96,12 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="" python -m rl_buffer.sac --scheme precond --
 python scripts/run_sweep.py --preset mini  --out-dir results/pilot   # 4-core CPU
 python scripts/run_sweep.py --preset full  --out-dir results/full    # 4 envs × 10 seeds × 1M
 
+# run the full sweep across 2 GPUs, packing several runs per card
+# (small nets under-fill a GPU, so pack many; each run is pinned one-GPU-each)
+python scripts/run_sweep.py --preset full --gpus 0,1 --workers 16 --out-dir results/full
+# ...but for single-env small-net SAC, CPU with --workers=cores is often faster:
+python scripts/run_sweep.py --preset full --workers 32 --out-dir results/full
+
 # aggregate + figures
 PYTHONPATH=. python analysis/rliable_analysis.py --results-dir results/pilot --fig-dir results/pilot/figs
 ```

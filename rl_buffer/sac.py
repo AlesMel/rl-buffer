@@ -61,6 +61,8 @@ def parse_args():
     p.add_argument("--out-dir", type=str, default="results")
     p.add_argument("--exp-name", type=str, default=None)
     p.add_argument("--torch-threads", type=int, default=0)
+    p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"],
+                   help="auto picks cuda if visible; cpu is often faster for small-net single-env SAC")
     # tensorboard
     p.add_argument("--track", type=int, default=1, help="write TensorBoard logs")
     p.add_argument("--log-dir", type=str, default="logs", help="TensorBoard root; logs go to <log-dir>/<exp-name>")
@@ -143,7 +145,13 @@ def main():
     args = parse_args()
     if args.torch_threads > 0:
         torch.set_num_threads(args.torch_threads)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
+    if device == "cuda" and not torch.cuda.is_available():
+        print("[warn] --device cuda requested but no CUDA device visible; falling back to cpu", flush=True)
+        device = "cpu"
 
     random.seed(args.seed)
     np.random.seed(args.seed)
