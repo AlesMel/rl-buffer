@@ -61,6 +61,10 @@ def parse_args():
     p.add_argument("--out-dir", type=str, default="results")
     p.add_argument("--exp-name", type=str, default=None)
     p.add_argument("--torch-threads", type=int, default=0)
+    # tensorboard
+    p.add_argument("--track", type=int, default=1, help="write TensorBoard logs")
+    p.add_argument("--log-dir", type=str, default="logs", help="TensorBoard root; logs go to <log-dir>/<exp-name>")
+    p.add_argument("--log-frequency", type=int, default=100, help="steps between scalar logs")
     return p.parse_args()
 
 
@@ -148,6 +152,22 @@ def main():
     exp_name = args.exp_name or f"{args.env_id}__{args.scheme}__{args.priority_mode}__seed{args.seed}"
     os.makedirs(args.out_dir, exist_ok=True)
 
+    # --- TensorBoard (optional, additive; writes to <log-dir>/<exp-name>) ---
+    writer = None
+    if args.track:
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+            log_path = os.path.join(args.log_dir, exp_name)
+            writer = SummaryWriter(log_path)
+            writer.add_text(
+                "hyperparameters",
+                "|param|value|\n|-|-|\n" + "\n".join(f"|{k}|{v}|" for k, v in vars(args).items()),
+            )
+            print(f"[{exp_name}] tensorboard -> {log_path}", flush=True)
+        except Exception as e:  # missing tensorboard, etc. -> run without it
+            print(f"[{exp_name}] tensorboard disabled ({e})", flush=True)
+            writer = None
+
     cfg = SamplingConfig(
         scheme=args.scheme, alpha=args.alpha_prio, beta0=args.beta0, beta1=1.0,
         total_anneal_steps=args.total_steps, priority_mode=args.priority_mode,
@@ -186,6 +206,8 @@ def main():
     log_rows = []          # eval curve
     train_returns = []     # (step, episodic_return)
     grad_evals = 0         # number of critic-gradient-shaped passes (compute accounting)
+    last_actor_loss = float("nan")
+    last_alpha_loss = float("nan")
     t_start = time.time()
 
     obs, _ = env.reset(seed=args.seed)
@@ -208,7 +230,11 @@ def main():
         obs = next_obs
         if term or trunc:
             if "episode" in info:
-                train_returns.append((global_step, float(info["episode"]["r"])))
+                ep_ret = float(info["episode"]["r"])
+                train_returns.append((global_step, ep_ret))
+                if writer is not None:
+                    writer.add_scalar("charts/episodic_return", ep_ret, global_step)
+                    writer.add_scalar("charts/episodic_length", float(info["episode"]["l"]), global_step)
             obs, _ = env.reset()
 
         # --- learn --------------------------------------------------------
@@ -287,6 +313,8 @@ def main():
                     alpha_loss.backward()
                     a_optimizer.step()
                     alpha = log_alpha.exp().detach()
+                    last_alpha_loss = alpha_loss.item()
+                last_actor_loss = actor_loss.item()
 
         # --- target networks --------------------------------------------
         if global_step % args.target_frequency == 0:
@@ -294,6 +322,27 @@ def main():
                 pt.data.mul_(1 - args.tau).add_(args.tau * p.data)
             for pt, p in zip(qf2_t.parameters(), qf2.parameters()):
                 pt.data.mul_(1 - args.tau).add_(args.tau * p.data)
+
+        # --- scalar logging ----------------------------------------------
+        if writer is not None and global_step % args.log_frequency == 0:
+            with torch.no_grad():
+                # IS-weight diagnostics: effective sample size ESS/B in (0,1];
+                # low ESS => concentrated weights => high estimator variance.
+                w_sum = w.sum()
+                ess = (w_sum * w_sum) / (w.pow(2).sum() + 1e-12)
+                writer.add_scalar("losses/qf_loss", qf_loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", last_actor_loss, global_step)
+                writer.add_scalar("losses/alpha", float(alpha), global_step)
+                if args.autotune:
+                    writer.add_scalar("losses/alpha_loss", last_alpha_loss, global_step)
+                writer.add_scalar("losses/qf1_values", q1.mean().item(), global_step)
+                writer.add_scalar("losses/td_error_abs", delta1.abs().mean().item(), global_step)
+                writer.add_scalar("sampling/is_weight_mean", w.mean().item(), global_step)
+                writer.add_scalar("sampling/is_weight_max", w.max().item(), global_step)
+                writer.add_scalar("sampling/is_weight_min", w.min().item(), global_step)
+                writer.add_scalar("sampling/ess_frac", (ess / B).item(), global_step)
+                writer.add_scalar("charts/grad_evals", grad_evals, global_step)
+                writer.add_scalar("charts/SPS", int(global_step / (time.time() - t_start)), global_step)
 
         # --- eval --------------------------------------------------------
         if (global_step + 1) % args.eval_frequency == 0:
@@ -303,6 +352,8 @@ def main():
                 "step": global_step + 1, "eval_return": eval_ret,
                 "grad_evals": grad_evals, "wall_s": time.time() - t_start, "sps": sps,
             })
+            if writer is not None:
+                writer.add_scalar("eval/return", eval_ret, global_step + 1)
             print(f"[{exp_name}] step={global_step+1} eval={eval_ret:.1f} "
                   f"grad_evals={grad_evals} sps={sps}", flush=True)
 
@@ -320,6 +371,8 @@ def main():
     with open(out_path, "w") as f:
         json.dump(result, f)
     env.close()
+    if writer is not None:
+        writer.close()
     print(f"saved {out_path}")
 
 

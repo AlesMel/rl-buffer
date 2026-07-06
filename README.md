@@ -71,6 +71,7 @@ rl_buffer/
 tests/            ghost-norm vs autograd, unbiasedness (critic+actor), shapes, sum-tree
 analysis/         rliable-style IQM + stratified-bootstrap CIs + performance profiles
 scripts/          run_sweep.py (parallel, idempotent), profile_priorities.py
+logs/             TensorBoard event files, one dir per experiment (git-ignored)
 WRITEUP.md        methodology, results with CIs, effect-size + caveats
 ```
 
@@ -84,8 +85,12 @@ PYTHONPATH=. python tests/test_priorities.py
 PYTHONPATH=. python tests/test_unbiasedness.py
 PYTHONPATH=. python tests/test_buffers.py
 
-# single run
+# single run (TensorBoard on by default -> logs/<experiment_name>)
 PYTHONPATH=. python -m rl_buffer.sac --env-id HalfCheetah-v4 --scheme precond --seed 1
+tensorboard --logdir logs        # losses, eval/return, and IS-weight diagnostics
+
+# force CPU on a GPU box (small-net single-env SAC is usually faster on CPU)
+PYTHONPATH=. CUDA_VISIBLE_DEVICES="" python -m rl_buffer.sac --scheme precond --seed 1
 
 # reduced pilot on this box, then the full cluster protocol
 python scripts/run_sweep.py --preset mini  --out-dir results/pilot   # 4-core CPU

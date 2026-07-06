@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 results/smoke/
 results/*.log
+logs/
 *.egg-info/
 .pytest_cache/
