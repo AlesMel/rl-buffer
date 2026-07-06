@@ -66,7 +66,7 @@ def humanoid_steps(env, steps):
 
 
 def run_one(job):
-    env, scheme, pmode, seed, steps, lstart, out_dir, gpu = job
+    env, scheme, pmode, seed, steps, lstart, out_dir, gpu, nice = job
     steps = humanoid_steps(env, steps)
     name = f"{env}__{scheme}__{pmode}__seed{seed}"
     out_path = os.path.join(out_dir, name + ".json")
@@ -81,6 +81,9 @@ def run_one(job):
         "--eval-episodes", "10", "--torch-threads", "1", "--out-dir", out_dir,
         "--device", device,
     ]
+    if nice:
+        # lower scheduling priority so a full sweep keeps the box responsive
+        cmd = ["nice", "-n", str(nice)] + cmd
     env_vars = dict(os.environ, PYTHONPATH=REPO, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
     if gpu is not None:
         # pin this run to a single GPU; inside the subprocess it is cuda:0
@@ -98,26 +101,35 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", choices=list(PRESETS), default="pilot")
     ap.add_argument("--out-dir", default="results/pilot")
-    ap.add_argument("--workers", type=int, default=4,
-                    help="concurrent runs (total). CPU: set ~= core count. GPU: split across --gpus")
+    ap.add_argument("--workers", type=str, default="4",
+                    help="concurrent runs (total), or 'auto' = cpu_count-2. CPU: ~= core count. "
+                         "Do NOT exceed physical cores (each run is 1 thread) or the box will thrash.")
     ap.add_argument("--gpus", type=str, default="",
                     help="comma-separated GPU ids to round-robin across, e.g. '0,1'. "
                          "Empty => CPU/auto. Runs are pinned one-GPU-each; pack several per GPU "
                          "by setting --workers above the GPU count (small nets share a card well).")
+    ap.add_argument("--nice", type=int, default=0,
+                    help="run workers at this nice level (e.g. 10) to keep the machine responsive")
     args = ap.parse_args()
     cfg = PRESETS[args.preset]
     os.makedirs(args.out_dir, exist_ok=True)
+
+    if args.workers == "auto":
+        workers = max(1, (os.cpu_count() or 4) - 2)
+    else:
+        workers = int(args.workers)
 
     gpus = [int(g) for g in args.gpus.split(",") if g.strip() != ""]
     triples = list(itertools.product(cfg["envs"], cfg["schemes"], cfg["seeds"]))
     jobs = [
         (env, scheme, cfg["priority_mode"], seed, cfg["total_steps"], cfg["learning_starts"],
-         args.out_dir, (gpus[i % len(gpus)] if gpus else None))
+         args.out_dir, (gpus[i % len(gpus)] if gpus else None), args.nice)
         for i, (env, scheme, seed) in enumerate(triples)
     ]
-    where = f"gpus={gpus} ({args.workers//max(1,len(gpus))}/gpu)" if gpus else "cpu"
-    print(f"preset={args.preset} jobs={len(jobs)} workers={args.workers} {where} out={args.out_dir}", flush=True)
-    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+    where = f"gpus={gpus} ({workers//max(1,len(gpus))}/gpu)" if gpus else "cpu"
+    print(f"preset={args.preset} jobs={len(jobs)} workers={workers} {where} "
+          f"nice={args.nice} cores={os.cpu_count()} out={args.out_dir}", flush=True)
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         for msg in ex.map(run_one, jobs):
             print(msg, flush=True)
     print("sweep complete", flush=True)
