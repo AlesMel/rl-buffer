@@ -1,0 +1,15 @@
+# Core
+torch>=2.2
+numpy>=1.24
+gymnasium>=0.29
+
+# MuJoCo continuous-control benchmarks
+gymnasium[mujoco]
+mujoco>=3.0
+
+# Logging / analysis
+tensorboard>=2.14
+rliable>=1.1.0
+matplotlib>=3.7
+scipy>=1.10
+pandas>=2.0

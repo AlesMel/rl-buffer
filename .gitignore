@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+results/smoke/
+results/*.log
+*.egg-info/
+.pytest_cache/
