@@ -139,22 +139,91 @@ variants.
 
 ## 3. Results (pilot)
 
-<!-- RESULTS_PLACEHOLDER -->
-*(filled in from `results/pilot/figs/summary.json` after the sweep completes.)*
+HalfCheetah-v4, 5 variants × 3 seeds × 60k steps, lazy priorities. Scores are
+per-env min–max normalised final eval returns; aggregation is IQM with 95%
+stratified bootstrap CIs. **This is an underpowered pilot — read the CIs, not the
+point estimates.** Commit `c84078b` (final `precond2` seeds folded into the
+figures/summary commit below).
 
-Figures: `results/pilot/figs/learning_curves.png`, `aggregate_iqm.png`,
-`perf_profile.png`; compute accounting in `compute_table.csv`.
+**Aggregate IQM (per-env-normalised), 95% CI, n = 3 seeds:**
+
+| scheme     | IQM   | 95% CI            |
+|------------|-------|-------------------|
+| uniform    | 0.286 | [0.000, 0.481]    |
+| per        | 0.487 | [0.434, 0.521]    |
+| euclid     | 0.288 | [0.152, 0.385]    |
+| **precond**| 0.471 | [0.312, 0.551]    |
+| precond2   | 0.706 | [0.379, 1.000]    |
+
+**Pairwise `precond` − baseline (ΔIQM, 95% CI, P(improve)):**
+
+| comparison           | ΔIQM   | 95% CI             | P(improve) |
+|----------------------|--------|--------------------|-----------|
+| precond − uniform    | +0.185 | [−0.055, +0.471]   | 0.91 |
+| precond − per        | −0.016 | [−0.170, +0.093]   | 0.41 |
+| **precond − euclid** | +0.183 | **[+0.007, +0.340]** | 0.99 |
+| precond − precond2   | −0.235 | [−0.529, +0.091]   | 0.07 |
+
+**What the CIs actually say:**
+
+1. **`precond` > `euclid` is the one signal that clears its CI** (Δ = +0.183, CI
+   [+0.007, +0.340] excludes zero, P = 0.99) — and it is in the *theory-predicted*
+   direction: the `D⁻¹` metric beats the Euclidean `D⁰` metric. This is the exact
+   comparison the whole hypothesis rests on, and the pilot's only resolved result.
+   At n = 3 seeds / 1 env it is **suggestive, not conclusive**.
+2. **`precond` ≈ `per`** — statistically indistinguishable (Δ = −0.016). PER is a
+   strong, cheap baseline; separating them needs the full protocol.
+3. **`precond` vs `uniform`** — directional (+0.185, P = 0.91) but the CI includes
+   zero. Not resolved.
+4. **`precond2` posts the highest point estimate, which *contradicts* the
+   hypothesis** (`precond2` should lose). But its CI is enormous — [0.379, 1.000],
+   spanning nearly the whole normalised range — and the pairwise CI includes zero.
+   With 3 seeds this is a **noise artifact**, the textbook under-seeding failure
+   mode the protocol warns about. It is *not* evidence that `D⁻²` beats `D⁻¹`; it is
+   evidence that 3 seeds cannot rank these methods.
+
+**Headline.** In a deliberately underpowered pilot, the only comparison that
+resolves is `precond` > `euclid`, consistent with the supervised result that the
+single `D⁻¹` power is the right metric. The primary `precond` vs {`uniform`,`per`}
+question and the `precond` vs `precond2` sanity are **unresolved** and require
+`--preset full` (≥10 seeds × 4 envs × 1M steps). Figures:
+`results/pilot/figs/{learning_curves,aggregate_iqm,perf_profile}.png`.
 
 ---
 
 ## 4. Compute / wall-clock
 
-<!-- COMPUTE_PLACEHOLDER -->
+**Per-run cost (60k steps, single CPU thread, this box).** All variants run the
+same number of gradient updates (55k; lazy → one update per step), so `grad_evals`
+is equal and the comparison is pure wall-clock:
 
-The gradient-norm variants add a per-sample-gradient cost over uniform/PER. We
-report gradient-eval counts and wall-clock so that a win from `precond` is judged
-sample-for-sample, not bought with extra per-step compute. Profiling of the
-ghost-norm itself (`scripts/profile_priorities.py`) is reported below.
+| scheme   | grad_evals | wall (s) | steps/s | overhead vs uniform |
+|----------|-----------|----------|---------|---------------------|
+| uniform  | 55000     | 888      | 67      | 1.00× |
+| per      | 55000     | 1162     | 51      | 1.31× |
+| euclid   | 55000     | 1446     | 41      | 1.63× |
+| precond  | 55000     | 1479     | 40      | 1.67× |
+| precond2 | 55000     | 1413     | 42      | 1.59× |
+
+So the gradient-norm variants cost ~1.6× uniform per environment step **at equal
+update count** — any sample-efficiency win must be discounted by this. Most of the
+overhead is *not* the norm itself but the lazy priority refresh recomputing the TD
+target; reusing the pre-step δ (a planned optimisation) removes a full forward pass
+per step and should cut the gap substantially.
+
+**Ghost-norm micro-benchmark** (`scripts/profile_priorities.py`, HalfCheetah critic,
+72 193 params, single thread) — this is why we use the ghost-norm trick and not
+`vmap`:
+
+| batch | plain update | ghost-norm ‖g‖_{D⁻¹} | vmap ground truth | vmap memory |
+|-------|-------------|----------------------|-------------------|-------------|
+| 256   | 2.45 ms     | 1.92 ms (**0.78×**)  | 131 ms (53×)      | 74 MB |
+| 1024  | 6.33 ms     | 6.97 ms (**1.10×**)  | 539 ms (85×)      | 296 MB |
+
+The per-sample gradient-norm in the preconditioner metric costs about **one extra
+critic update** and materialises only `O(B·width)`; the naive per-sample-gradient
+route (`torch.func.vmap(grad)`) is **50–85× slower** and allocates a `B×P` tensor
+(74–296 MB here). Profiling early and using the norm trick was essential.
 
 ---
 
@@ -184,6 +253,15 @@ PYTHONPATH=. python tests/test_unbiasedness.py && \
 PYTHONPATH=. python tests/test_buffers.py
 python scripts/run_sweep.py --preset mini --out-dir results/pilot
 PYTHONPATH=. python analysis/rliable_analysis.py --results-dir results/pilot --fig-dir results/pilot/figs
+PYTHONPATH=. python scripts/profile_priorities.py    # ghost-norm vs vmap cost
+```
+
+For the full protocol on a many-core box (CPU is the right hardware here — the
+sweep is CPU-bound and parallel across runs):
+
+```bash
+python scripts/run_sweep.py --preset full --workers auto --nice 10 --out-dir results/full
+PYTHONPATH=. python analysis/rliable_analysis.py --results-dir results/full --fig-dir results/full/figs
 ```
 
 Config, seeds, and the exact args of every run are stored inside each

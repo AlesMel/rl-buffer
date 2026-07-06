@@ -1,0 +1,106 @@
+{
+  "envs": [
+    "HalfCheetah-v4"
+  ],
+  "aggregate": {
+    "uniform": {
+      "iqm": 0.2858420706554367,
+      "ci_low": 0.0,
+      "ci_high": 0.4807041595753911,
+      "n_seeds": 3,
+      "n_envs": 1
+    },
+    "per": {
+      "iqm": 0.4866775835800099,
+      "ci_low": 0.43402239345515586,
+      "ci_high": 0.5210121383665718,
+      "n_seeds": 3,
+      "n_envs": 1
+    },
+    "euclid": {
+      "iqm": 0.28769753241811646,
+      "ci_low": 0.1521312572051257,
+      "ci_high": 0.38493000609230354,
+      "n_seeds": 3,
+      "n_envs": 1
+    },
+    "precond": {
+      "iqm": 0.47104797713604957,
+      "ci_low": 0.3117336918957835,
+      "ci_high": 0.5513920277909284,
+      "n_seeds": 3,
+      "n_envs": 1
+    },
+    "precond2": {
+      "iqm": 0.7057826817028733,
+      "ci_low": 0.37918024136253686,
+      "ci_high": 1.0,
+      "n_seeds": 3,
+      "n_envs": 1
+    }
+  },
+  "pairwise": {
+    "precond_minus_uniform": {
+      "delta_iqm": 0.18520590648061286,
+      "ci_low": -0.05491492534289921,
+      "ci_high": 0.4705900384462189,
+      "prob_improve": 0.9144
+    },
+    "precond_minus_per": {
+      "delta_iqm": -0.01562960644396033,
+      "ci_low": -0.16960591853480322,
+      "ci_high": 0.09325308715822661,
+      "prob_improve": 0.4072
+    },
+    "precond_minus_euclid": {
+      "delta_iqm": 0.1833504447179331,
+      "ci_low": 0.006689797768528238,
+      "ci_high": 0.3403782009555434,
+      "prob_improve": 0.9888
+    },
+    "precond_minus_precond2": {
+      "delta_iqm": -0.23473470456682372,
+      "ci_low": -0.5289520228639504,
+      "ci_high": 0.09140979708368202,
+      "prob_improve": 0.0684
+    }
+  },
+  "norm": {
+    "HalfCheetah-v4": [
+      3787.056915810904,
+      6341.968405983481
+    ]
+  },
+  "compute_table": [
+    {
+      "scheme": "uniform",
+      "mean_grad_evals": 55000.0,
+      "mean_wall_s": 887.6950693130493,
+      "mean_sps": 67.0
+    },
+    {
+      "scheme": "per",
+      "mean_grad_evals": 55000.0,
+      "mean_wall_s": 1161.9285765488942,
+      "mean_sps": 51.0
+    },
+    {
+      "scheme": "euclid",
+      "mean_grad_evals": 55000.0,
+      "mean_wall_s": 1445.510916550954,
+      "mean_sps": 41.333333333333336
+    },
+    {
+      "scheme": "precond",
+      "mean_grad_evals": 55000.0,
+      "mean_wall_s": 1479.188137928645,
+      "mean_sps": 40.0
+    },
+    {
+      "scheme": "precond2",
+      "mean_grad_evals": 55000.0,
+      "mean_wall_s": 1412.9905142784119,
+      "mean_sps": 42.0
+    }
+  ]
+}
