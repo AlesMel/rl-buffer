@@ -59,8 +59,35 @@ def test_two_stage_laber_weight_unbiased_mean():
     assert abs(est - pool_mean) < 0.05, (est, pool_mean)
 
 
+def test_global_norm_is_batch_independent():
+    """Global normalisation divides by a per-dataset constant, so a given
+    transition gets the SAME weight in every batch (a pure rescale => unbiased up
+    to scale). Batch-max normalisation divides by a sample-correlated quantity, so
+    the same transition gets DIFFERENT weights across batches (the bias source)."""
+    from collections import defaultdict
+    for mode, expect_constant in [("global", True), ("batch", False)]:
+        cfg = SamplingConfig(scheme="per", alpha=1.0, beta0=1.0, beta1=1.0,
+                             normalize_mode=mode)
+        buf = ReplayBuffer(8, 3, 1, cfg, seed=0)
+        for _ in range(8):
+            buf.add(np.zeros(3), np.zeros(1), 0.0, np.zeros(3), 0.0)
+        # distinct priorities so the per-batch max varies across draws
+        buf.update_priorities(np.arange(8), np.arange(1.0, 9.0))
+        wm = defaultdict(list)
+        for _ in range(300):
+            idxs, _, w = buf.sample_lazy(4, step=10_000)   # beta==1 here
+            for i, wi in zip(idxs, w.numpy()):
+                wm[int(i)].append(float(wi))
+        max_std = max(np.std(v) for v in wm.values() if len(v) > 3)
+        if expect_constant:
+            assert max_std < 1e-6, f"global: per-index weight should be constant, std={max_std:.2e}"
+        else:
+            assert max_std > 1e-3, f"batch: per-index weight should vary, std={max_std:.2e}"
+
+
 if __name__ == "__main__":
     test_sumtree_sampling_distribution()
     test_uniform_buffer_weights_are_one()
     test_two_stage_laber_weight_unbiased_mean()
+    test_global_norm_is_batch_independent()
     print("test_buffers OK")

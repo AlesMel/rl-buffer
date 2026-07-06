@@ -81,9 +81,23 @@ is exactly the comparison the pilot isolates.
 - **Per-sample gradient norms without materialising per-sample grads.** The
   weighted ghost-norm trick (§1.4) is validated against a `torch.func.vmap(grad)`
   ground truth for `M ∈ {D⁰, D⁻¹, D⁻²}` (`tests/test_priorities.py`, rtol 1e-4).
-- **Weight honesty.** `w_i = 1/(N p_i)`. The optional `max`-normalisation
-  (`w_i/max_j w_j`, `β→1`) is a rescale and is **not** claimed to be exactly
-  unbiased; the exact-unbiasedness test runs with `β=1` and no max-norm.
+- **Weight honesty & the normaliser bias.** `w_i = 1/(N p_i)`. Weight
+  normalisation is controlled by `--normalize-mode`:
+  - **`global`** (default): divide by the *buffer-wide* max weight
+    `(N·p_min)^{-β}`, a per-dataset constant independent of the drawn batch. This
+    is a pure (slowly time-varying) learning-rate rescale — **unbiased up to
+    scale** — while still bounding every weight to `(0,1]`. `p_min` is tracked in
+    `O(log N)` by a min-tree alongside the sum-tree.
+  - **`batch`**: PER's classic `w_i/max_j w_j` over the *minibatch*. The
+    normaliser is the per-batch max, which is **correlated with the sampled
+    batch**, so it does *not* factor out of the expectation — it is a
+    sample-dependent reweighting and hence **biased** (in the `B=1` limit it
+    collapses to raw, uncorrected prioritized sampling). Kept only for PER parity.
+  - **`none`**: raw `w_i=(N p_i)^{-β}`, exactly unbiased at `β=1`, higher variance.
+  `tests/test_buffers.py` asserts the distinguishing property directly: under
+  `global` a fixed transition receives the *same* weight in every batch; under
+  `batch` its weight varies batch-to-batch. The exact-gradient unbiasedness test
+  uses `β=1` with no normalisation.
 
 ### 1.4 Weighted ghost-norm (the efficient core)
 

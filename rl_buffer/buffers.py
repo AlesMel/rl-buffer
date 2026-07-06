@@ -76,6 +76,34 @@ class SumTree:
         return m if m > 0 else 1.0
 
 
+class MinTree:
+    """Fixed-capacity binary min tree; tracks the minimum leaf priority in O(log N).
+
+    Used to compute the *global* smallest sampling probability p_min, hence the
+    buffer-wide maximum IS weight, so weights can be normalised by a per-dataset
+    constant (unbiased up to scale) rather than the per-batch max (biased).
+    """
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.tree = np.full(2 * capacity, np.inf, dtype=np.float64)
+
+    def set(self, idx: int, value: float):
+        i = idx + self.capacity
+        self.tree[i] = value
+        i //= 2
+        while i >= 1:
+            self.tree[i] = min(self.tree[2 * i], self.tree[2 * i + 1])
+            i //= 2
+
+    def set_batch(self, idxs: np.ndarray, values: np.ndarray):
+        for i, v in zip(idxs, values):
+            self.set(int(i), float(v))
+
+    def min(self) -> float:
+        return float(self.tree[1])
+
+
 @dataclass
 class SamplingConfig:
     scheme: str = "uniform"          # uniform | per | euclid | precond | precond2
@@ -86,7 +114,13 @@ class SamplingConfig:
     eps_priority: float = 1e-6       # floor so p keeps full support
     priority_mode: str = "lazy"      # lazy | two_stage
     pool_mult: int = 4               # candidate-pool multiplier for two_stage
-    max_normalize: bool = True       # divide weights by max (lazy scheme stability)
+    # IS-weight normalisation for the lazy scheme:
+    #   global : divide by the buffer-wide max weight (per-dataset constant) ->
+    #            a pure learning-rate rescale, UNBIASED up to scale (recommended)
+    #   batch  : divide by the per-batch max (PER's classic trick) -> BIASED,
+    #            because the normaliser is correlated with the sampled batch
+    #   none   : raw w_i = (N p_i)^{-beta} -> exactly unbiased at beta=1, higher variance
+    normalize_mode: str = "global"   # global | batch | none
     metric_power: int = field(init=False, default=0)
 
     def __post_init__(self):
@@ -120,8 +154,11 @@ class ReplayBuffer:
         self.pos = 0
         self.size = 0
 
-        # lazy-scheme sum tree over p_i = (priority + eps)^alpha
-        self.tree = SumTree(capacity) if (cfg.is_prioritized and cfg.priority_mode == "lazy") else None
+        # lazy-scheme sum tree over p_i = (priority + eps)^alpha, plus a min tree
+        # so we can normalise by the buffer-wide (global) max IS weight.
+        lazy_prio = cfg.is_prioritized and cfg.priority_mode == "lazy"
+        self.tree = SumTree(capacity) if lazy_prio else None
+        self.min_tree = MinTree(capacity) if lazy_prio else None
         self._max_prio = 1.0
 
     def add(self, obs, action, reward, next_obs, done):
@@ -132,6 +169,8 @@ class ReplayBuffer:
         self.next_obs[i] = next_obs
         self.dones[i] = done
         if self.tree is not None:
+            if self.min_tree is not None:
+                self.min_tree.set(i, self._max_prio ** self.cfg.alpha)
             # new transitions get max priority so they are seen at least once
             self.tree.set(i, self._max_prio ** self.cfg.alpha)
         self.pos = (self.pos + 1) % self.capacity
@@ -174,8 +213,21 @@ class ReplayBuffer:
         p = np.array([self.tree.get(int(i)) for i in idxs], dtype=np.float64) / max(total, 1e-12)
         beta = self._beta(step)
         w = (self.size * p) ** (-beta)
-        if self.cfg.max_normalize:
+        mode = self.cfg.normalize_mode
+        if mode == "global":
+            # divide by the buffer-wide max weight = (N * p_min)^{-beta}. This is a
+            # per-dataset constant (independent of the drawn batch), so it is a pure
+            # learning-rate rescale -- unbiased up to scale -- while still bounding
+            # every weight to (0, 1]. Contrast batch-max, which is sample-correlated.
+            p_min = self.min_tree.min() / max(total, 1e-12)
+            if np.isfinite(p_min) and p_min > 0:
+                w_max = (self.size * p_min) ** (-beta)
+                w = np.minimum(w / w_max, 1.0)
+            else:                     # degenerate buffer -> fall back to batch max
+                w = w / w.max()
+        elif mode == "batch":
             w = w / w.max()
+        # mode == "none": raw weights (exactly unbiased at beta=1)
         batch = self._gather(idxs)
         return idxs, batch, torch.as_tensor(w, dtype=torch.float32, device=self.device)
 
@@ -207,4 +259,7 @@ class ReplayBuffer:
             return
         prio = np.abs(priorities.astype(np.float64)) + self.cfg.eps_priority
         self._max_prio = max(self._max_prio, float(prio.max()))
-        self.tree.set_batch(idxs, prio ** self.cfg.alpha)
+        prio_a = prio ** self.cfg.alpha
+        self.tree.set_batch(idxs, prio_a)
+        if self.min_tree is not None:
+            self.min_tree.set_batch(idxs, prio_a)

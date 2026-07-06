@@ -53,7 +53,12 @@ def parse_args():
     p.add_argument("--alpha-prio", type=float, default=0.6)
     p.add_argument("--beta0", type=float, default=0.4)
     p.add_argument("--pool-mult", type=int, default=4)
-    p.add_argument("--max-normalize", type=int, default=1)
+    p.add_argument("--normalize-mode", type=str, default="global",
+                   choices=["global", "batch", "none"],
+                   help="lazy IS-weight normalisation: global (per-dataset, unbiased up "
+                        "to scale), batch (PER's per-batch max, biased), none (raw)")
+    p.add_argument("--max-normalize", type=int, default=1,
+                   help="deprecated; --max-normalize 0 forces --normalize-mode none")
     p.add_argument("--priority-source", type=str, default="both", choices=["both", "q1"])
     # eval / logging
     p.add_argument("--eval-frequency", type=int, default=10_000)
@@ -176,10 +181,11 @@ def main():
             print(f"[{exp_name}] tensorboard disabled ({e})", flush=True)
             writer = None
 
+    normalize_mode = "none" if not args.max_normalize else args.normalize_mode
     cfg = SamplingConfig(
         scheme=args.scheme, alpha=args.alpha_prio, beta0=args.beta0, beta1=1.0,
         total_anneal_steps=args.total_steps, priority_mode=args.priority_mode,
-        pool_mult=args.pool_mult, max_normalize=bool(args.max_normalize),
+        pool_mult=args.pool_mult, normalize_mode=normalize_mode,
     )
     cfg.__dict__["priority_source"] = args.priority_source
 
