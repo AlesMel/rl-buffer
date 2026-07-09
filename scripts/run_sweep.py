@@ -79,7 +79,7 @@ def run_one(job):
         "--seed", str(seed), "--total-steps", str(steps),
         "--learning-starts", str(lstart), "--eval-frequency", "10000",
         "--eval-episodes", "10", "--torch-threads", "1", "--out-dir", out_dir,
-        "--device", device,
+        "--device", device, "--verbose", "0",
     ]
     if nice:
         # lower scheduling priority so a full sweep keeps the box responsive

@@ -70,6 +70,8 @@ def parse_args():
     p.add_argument("--torch-threads", type=int, default=0)
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"],
                    help="auto picks cuda if visible; cpu is often faster for small-net single-env SAC")
+    p.add_argument("--verbose", type=int, default=1, choices=[0, 1],
+                   help="1: tqdm progress bar (or periodic prints if tqdm missing); 0: quiet")
     # tensorboard
     p.add_argument("--track", type=int, default=1, help="write TensorBoard logs")
     p.add_argument("--log-dir", type=str, default="logs", help="TensorBoard root; logs go to <log-dir>/<exp-name>")
@@ -227,10 +229,35 @@ def main():
     last_alpha_loss = float("nan")
     t_start = time.time()
 
+    # --- progress display (tqdm bar, or periodic prints if tqdm missing) ----
+    pbar = None
+    if args.verbose:
+        try:
+            from tqdm import tqdm
+            pbar = tqdm(total=args.total_steps, desc=exp_name, unit="step",
+                        dynamic_ncols=True, mininterval=1.0, smoothing=0.05)
+        except ImportError:
+            print(f"[{exp_name}] tqdm not installed; printing every 5000 steps", flush=True)
+
+    post = {}   # rolling tqdm postfix (ep_ret / eval / sps)
+
+    def _say(msg):
+        if pbar is not None:
+            pbar.write(msg)
+        else:
+            print(msg, flush=True)
+
     obs, _ = env.reset(seed=args.seed)
     B = args.batch_size
 
     for global_step in range(args.total_steps):
+        if pbar is not None:
+            pbar.update(1)
+        elif args.verbose and global_step % 5000 == 0 and global_step > 0:
+            sps_now = int(global_step / (time.time() - t_start))
+            last_ret = train_returns[-1][1] if train_returns else float("nan")
+            print(f"[{exp_name}] step={global_step}/{args.total_steps} "
+                  f"sps={sps_now} last_ep_return={last_ret:.1f}", flush=True)
         # --- act ----------------------------------------------------------
         if global_step < args.learning_starts:
             action = env.action_space.sample()
@@ -252,6 +279,9 @@ def main():
                 if writer is not None:
                     writer.add_scalar("charts/episodic_return", ep_ret, global_step)
                     writer.add_scalar("charts/episodic_length", float(info["episode"]["l"]), global_step)
+                if pbar is not None:
+                    post["ep_ret"] = f"{ep_ret:.0f}"
+                    pbar.set_postfix(post, refresh=False)
             obs, _ = env.reset()
 
         # --- learn --------------------------------------------------------
@@ -372,8 +402,12 @@ def main():
             })
             if writer is not None:
                 writer.add_scalar("eval/return", eval_ret, global_step + 1)
-            print(f"[{exp_name}] step={global_step+1} eval={eval_ret:.1f} "
-                  f"grad_evals={grad_evals} sps={sps}", flush=True)
+            _say(f"[{exp_name}] step={global_step+1} eval={eval_ret:.1f} "
+                 f"grad_evals={grad_evals} sps={sps}")
+            if pbar is not None:
+                post["eval"] = f"{eval_ret:.0f}"
+                post["sps"] = sps
+                pbar.set_postfix(post, refresh=False)
 
     # --- persist ---------------------------------------------------------
     result = {
@@ -389,6 +423,8 @@ def main():
     with open(out_path, "w") as f:
         json.dump(result, f)
     env.close()
+    if pbar is not None:
+        pbar.close()
     if writer is not None:
         writer.close()
     print(f"saved {out_path}")

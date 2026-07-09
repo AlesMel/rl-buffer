@@ -12,6 +12,7 @@ swig
 gymnasium[box2d]
 
 # Logging / analysis
+tqdm>=4.60
 tensorboard>=2.14
 rliable>=1.1.0
 matplotlib>=3.7

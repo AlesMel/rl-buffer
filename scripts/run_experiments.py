@@ -74,6 +74,7 @@ def run_one(job):
         "--out-dir", results_dir,
         "--log-dir", logs_dir,
         "--device", device,
+        "--verbose", "0",   # output is captured; progress lives in TensorBoard
     ]
     if nice:
         cmd = ["nice", "-n", str(nice)] + cmd
