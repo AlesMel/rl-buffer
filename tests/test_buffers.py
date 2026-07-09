@@ -65,7 +65,7 @@ def test_global_norm_is_batch_independent():
     to scale). Batch-max normalisation divides by a sample-correlated quantity, so
     the same transition gets DIFFERENT weights across batches (the bias source)."""
     from collections import defaultdict
-    for mode, expect_constant in [("global", True), ("batch", False)]:
+    for mode, expect_constant in [("clip", True), ("global", True), ("batch", False)]:
         cfg = SamplingConfig(scheme="per", alpha=1.0, beta0=1.0, beta1=1.0,
                              normalize_mode=mode)
         buf = ReplayBuffer(8, 3, 1, cfg, seed=0)

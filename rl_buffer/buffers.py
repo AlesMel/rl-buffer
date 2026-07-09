@@ -115,12 +115,22 @@ class SamplingConfig:
     priority_mode: str = "lazy"      # lazy | two_stage
     pool_mult: int = 4               # candidate-pool multiplier for two_stage
     # IS-weight normalisation for the lazy scheme:
-    #   global : divide by the buffer-wide max weight (per-dataset constant) ->
-    #            a pure learning-rate rescale, UNBIASED up to scale (recommended)
+    #   clip   : w_i = min((N p_i)^{-beta}, weight_clip). Raw weights already have
+    #            E_{i~p}[w_i] = 1 at beta=1, so no rescaling is needed; a CONSTANT
+    #            cap truncates the rare heavy tail. Batch-independent (no batch-
+    #            correlation bias), scale-stable, bounded variance; only bias is
+    #            the standard truncated-IS tail bias (Ionides 2008). RECOMMENDED.
+    #   global : divide by the buffer-wide max weight (N p_min)^{-beta}. Batch-
+    #            independent (unbiased up to scale) BUT p_min is an extreme
+    #            statistic: it jumps by orders of magnitude when any priority
+    #            refresh lands near the eps floor, lurching the effective LR of
+    #            all losses (Adam re-adapts over ~1k steps). Unstable in envs
+    #            with heterogeneous TD errors; kept for comparison.
     #   batch  : divide by the per-batch max (PER's classic trick) -> BIASED,
     #            because the normaliser is correlated with the sampled batch
-    #   none   : raw w_i = (N p_i)^{-beta} -> exactly unbiased at beta=1, higher variance
-    normalize_mode: str = "global"   # global | batch | none
+    #   none   : raw w_i = (N p_i)^{-beta} -> exactly unbiased at beta=1, unbounded tail
+    normalize_mode: str = "clip"     # clip | global | batch | none
+    weight_clip: float = 10.0        # constant cap C for normalize_mode='clip'
     metric_power: int = field(init=False, default=0)
 
     def __post_init__(self):
@@ -214,7 +224,10 @@ class ReplayBuffer:
         beta = self._beta(step)
         w = (self.size * p) ** (-beta)
         mode = self.cfg.normalize_mode
-        if mode == "global":
+        if mode == "clip":
+            # constant cap: batch-independent, scale-stable, bounded (see config)
+            w = np.minimum(w, self.cfg.weight_clip)
+        elif mode == "global":
             # divide by the buffer-wide max weight = (N * p_min)^{-beta}. This is a
             # per-dataset constant (independent of the drawn batch), so it is a pure
             # learning-rate rescale -- unbiased up to scale -- while still bounding

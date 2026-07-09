@@ -55,10 +55,13 @@ def parse_args():
     p.add_argument("--alpha-prio", type=float, default=0.6)
     p.add_argument("--beta0", type=float, default=0.4)
     p.add_argument("--pool-mult", type=int, default=4)
-    p.add_argument("--normalize-mode", type=str, default="global",
-                   choices=["global", "batch", "none"],
-                   help="lazy IS-weight normalisation: global (per-dataset, unbiased up "
-                        "to scale), batch (PER's per-batch max, biased), none (raw)")
+    p.add_argument("--normalize-mode", type=str, default="clip",
+                   choices=["clip", "global", "batch", "none"],
+                   help="lazy IS-weight handling: clip (constant cap, stable+batch-independent, "
+                        "recommended), global (buffer-max normaliser; unstable LR transients), "
+                        "batch (PER's per-batch max, biased), none (raw)")
+    p.add_argument("--weight-clip", type=float, default=10.0,
+                   help="constant weight cap C for --normalize-mode clip")
     p.add_argument("--max-normalize", type=int, default=1,
                    help="deprecated; --max-normalize 0 forces --normalize-mode none")
     p.add_argument("--priority-source", type=str, default="both", choices=["both", "q1"])
@@ -190,6 +193,7 @@ def main():
         scheme=args.scheme, alpha=args.alpha_prio, beta0=args.beta0, beta1=1.0,
         total_anneal_steps=args.total_steps, priority_mode=args.priority_mode,
         pool_mult=args.pool_mult, normalize_mode=normalize_mode,
+        weight_clip=args.weight_clip,
     )
     cfg.__dict__["priority_source"] = args.priority_source
 
