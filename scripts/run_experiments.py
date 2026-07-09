@@ -74,19 +74,35 @@ def run_one(job):
         "--out-dir", results_dir,
         "--log-dir", logs_dir,
         "--device", device,
-        "--verbose", "0",   # output is captured; progress lives in TensorBoard
+        "--verbose", "0",   # no per-step tqdm in children; eval lines stream below
     ]
     if nice:
         cmd = ["nice", "-n", str(nice)] + cmd
     env_vars = dict(os.environ, PYTHONPATH=REPO, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
     if gpu is not None:
         env_vars["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    t0 = time.time()
-    r = subprocess.run(cmd, cwd=REPO, env=env_vars, capture_output=True, text=True)
-    dt = time.time() - t0
     tag = f"gpu{gpu}" if gpu is not None else "cpu"
-    if r.returncode != 0:
-        return f"FAIL  {name}/{run_name} [{tag}]  ({dt:.0f}s)\n{r.stderr[-800:]}"
+
+    # Stream the child's output: eval progress lines ("[<run>] step=... eval=...")
+    # go straight to the terminal as they happen (the live heartbeat), and the
+    # full output is teed to logs/<run>.out for tail -f / postmortem.
+    out_log = os.path.join(logs_dir, run_name + ".out")
+    print(f"start {name}/{run_name} [{tag}]  (log: {out_log})", flush=True)
+    t0 = time.time()
+    with open(out_log, "w") as lf:
+        proc = subprocess.Popen(cmd, cwd=REPO, env=env_vars, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for line in proc.stdout:
+            lf.write(line)
+            lf.flush()
+            if line.startswith("["):          # sac.py progress/eval lines
+                print(f"  {line.rstrip()}", flush=True)
+        proc.wait()
+    dt = time.time() - t0
+    if proc.returncode != 0:
+        with open(out_log) as lf:
+            tail = "".join(lf.readlines()[-15:])
+        return f"FAIL  {name}/{run_name} [{tag}]  ({dt:.0f}s)\n{tail}"
     return f"done  {name}/{run_name} [{tag}]  ({dt:.0f}s)"
 
 
