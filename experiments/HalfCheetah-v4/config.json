@@ -1,0 +1,29 @@
+{
+  "env_id": "HalfCheetah-v4",
+  "env_kwargs": {},
+  "total_steps": 1000000,
+  "learning_starts": 5000,
+  "eval_frequency": 10000,
+  "eval_episodes": 10,
+  "schemes": [
+    "uniform",
+    "per",
+    "euclid",
+    "precond",
+    "precond2"
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "priority_mode": "lazy",
+  "notes": "MuJoCo, no early termination (1000-step episodes); pilot env."
+}

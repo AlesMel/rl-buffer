@@ -3,5 +3,7 @@ __pycache__/
 results/smoke/
 results/*.log
 logs/
+experiments/*/results/
+experiments/*/logs/
 *.egg-info/
 .pytest_cache/

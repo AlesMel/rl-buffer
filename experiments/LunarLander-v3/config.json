@@ -1,0 +1,31 @@
+{
+  "env_id": "LunarLander-v3",
+  "env_kwargs": {
+    "continuous": true
+  },
+  "total_steps": 500000,
+  "learning_starts": 5000,
+  "eval_frequency": 10000,
+  "eval_episodes": 10,
+  "schemes": [
+    "uniform",
+    "per",
+    "euclid",
+    "precond",
+    "precond2"
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "priority_mode": "lazy",
+  "notes": "Box2D, continuous mode (SAC needs continuous actions). Sparse-ish shaping, early termination."
+}

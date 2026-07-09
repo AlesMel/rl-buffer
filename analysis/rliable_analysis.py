@@ -72,14 +72,18 @@ def stratified_bootstrap(scores: np.ndarray, stat_fn, n_boot=5000, seed=0):
 # --------------------------------------------------------------------------- #
 # Loading
 # --------------------------------------------------------------------------- #
-def load_runs(results_dir):
+def load_runs(results_dirs):
+    """Load run JSONs from one or more results directories."""
+    if isinstance(results_dirs, str):
+        results_dirs = [results_dirs]
     runs = []
-    for path in sorted(glob.glob(os.path.join(results_dir, "*.json"))):
-        with open(path) as f:
-            r = json.load(f)
-        if not r.get("eval_curve"):
-            continue
-        runs.append(r)
+    for d in results_dirs:
+        for path in sorted(glob.glob(os.path.join(d, "*.json"))):
+            with open(path) as f:
+                r = json.load(f)
+            if not r.get("eval_curve"):
+                continue
+            runs.append(r)
     return runs
 
 
@@ -269,7 +273,8 @@ def plot_perf_profile(data, summary, fig_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--results-dir", default="results/pilot")
+    ap.add_argument("--results-dir", nargs="+", default=["results/pilot"],
+                    help="one or more results dirs (e.g. experiments/*/results)")
     ap.add_argument("--fig-dir", default="results/pilot/figs")
     ap.add_argument("--n-boot", type=int, default=5000)
     args = ap.parse_args()

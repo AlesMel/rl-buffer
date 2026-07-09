@@ -7,6 +7,10 @@ gymnasium>=0.29
 gymnasium[mujoco]
 mujoco>=3.0
 
+# Box2D (LunarLander-v3 continuous)
+swig
+gymnasium[box2d]
+
 # Logging / analysis
 tensorboard>=2.14
 rliable>=1.1.0

@@ -33,6 +33,8 @@ from rl_buffer.priorities import adam_diag_preconditioner, per_sample_priority
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--env-id", type=str, default="HalfCheetah-v4")
+    p.add_argument("--env-kwargs", type=str, default="{}",
+                   help='JSON kwargs for gym.make, e.g. \'{"continuous": true}\' for LunarLander-v3')
     p.add_argument("--scheme", type=str, default="uniform",
                    choices=["uniform", "per", "euclid", "precond", "precond2"])
     p.add_argument("--priority-mode", type=str, default="lazy", choices=["lazy", "two_stage"])
@@ -75,15 +77,15 @@ def parse_args():
     return p.parse_args()
 
 
-def make_env(env_id, seed, eval_=False):
-    env = gym.make(env_id)
+def make_env(env_id, seed, eval_=False, env_kwargs=None):
+    env = gym.make(env_id, **(env_kwargs or {}))
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env.action_space.seed(seed + (10_000 if eval_ else 0))
     return env
 
 
-def evaluate(actor, env_id, seed, episodes, device):
-    env = make_env(env_id, seed + 999, eval_=True)
+def evaluate(actor, env_id, seed, episodes, device, env_kwargs=None):
+    env = make_env(env_id, seed + 999, eval_=True, env_kwargs=env_kwargs)
     returns = []
     for ep in range(episodes):
         obs, _ = env.reset(seed=seed + 999 + ep)
@@ -189,7 +191,8 @@ def main():
     )
     cfg.__dict__["priority_source"] = args.priority_source
 
-    env = make_env(args.env_id, args.seed)
+    env_kwargs = json.loads(args.env_kwargs)
+    env = make_env(args.env_id, args.seed, env_kwargs=env_kwargs)
     obs_dim = int(np.prod(env.observation_space.shape))
     act_dim = int(np.prod(env.action_space.shape))
     a_low, a_high = env.action_space.low, env.action_space.high
@@ -360,7 +363,8 @@ def main():
 
         # --- eval --------------------------------------------------------
         if (global_step + 1) % args.eval_frequency == 0:
-            eval_ret, _ = evaluate(actor, args.env_id, args.seed, args.eval_episodes, device)
+            eval_ret, _ = evaluate(actor, args.env_id, args.seed, args.eval_episodes, device,
+                                   env_kwargs=env_kwargs)
             sps = int((global_step + 1) / (time.time() - t_start))
             log_rows.append({
                 "step": global_step + 1, "eval_return": eval_ret,

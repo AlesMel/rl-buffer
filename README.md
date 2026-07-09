@@ -70,7 +70,8 @@ rl_buffer/
   sac.py          SAC training loop; the only knob is the sampling scheme
 tests/            ghost-norm vs autograd, unbiasedness (critic+actor), shapes, sum-tree
 analysis/         rliable-style IQM + stratified-bootstrap CIs + performance profiles
-scripts/          run_sweep.py (parallel, idempotent), profile_priorities.py
+scripts/          run_sweep.py, run_experiments.py (parallel, idempotent), profile_priorities.py
+experiments/      one folder per env (config.json + results/ + logs/), see experiments/README.md
 logs/             TensorBoard event files, one dir per experiment (git-ignored)
 WRITEUP.md        methodology, results with CIs, effect-size + caveats
 ```
@@ -96,7 +97,12 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="" python -m rl_buffer.sac --scheme precond --
 python scripts/run_sweep.py --preset mini  --out-dir results/pilot   # 4-core CPU
 python scripts/run_sweep.py --preset full  --out-dir results/full    # 4 envs × 10 seeds × 1M
 
-# RECOMMENDED for a many-core box: CPU-only, one run per core, machine-friendly.
+# RECOMMENDED: per-env experiment folders (see experiments/README.md)
+python scripts/run_experiments.py --env HalfCheetah-v4 --workers auto --nice 10
+python scripts/run_experiments.py --env all            --workers auto --nice 10
+python analysis/rliable_analysis.py --results-dir experiments/*/results --fig-dir experiments/figs_all
+
+# or the flat presets: CPU-only, one run per core, machine-friendly.
 # The sweep is embarrassingly parallel across runs and CPU-bound (env sim is CPU),
 # so cores beat GPUs here. 'auto' = cpu_count-2; --nice keeps the box responsive.
 python scripts/run_sweep.py --preset full --workers auto --nice 10 --out-dir results/full

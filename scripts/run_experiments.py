@@ -1,0 +1,139 @@
+"""Run the sampling-scheme sweep for per-env experiment folders.
+
+Each ``experiments/<Env>/`` folder is self-contained:
+
+    experiments/<Env>/config.json   env id + kwargs, steps, seeds, schemes
+    experiments/<Env>/results/      one JSON per run (written by rl_buffer.sac)
+    experiments/<Env>/logs/         TensorBoard event dirs, one per run
+
+Usage:
+    python scripts/run_experiments.py --env HalfCheetah-v4                 # one env
+    python scripts/run_experiments.py --env all --workers auto --nice 10   # everything
+    python scripts/run_experiments.py --env LunarLander-v3 --seeds 1,2,3 --steps 100000
+
+Jobs whose result JSON already exists are skipped, so re-running a folder
+extends it (add seeds / recover from an interrupt) without recomputation.
+Analyze one folder or several together:
+    python analysis/rliable_analysis.py --results-dir experiments/<Env>/results ...
+    python analysis/rliable_analysis.py --results-dir experiments/*/results ...
+"""
+from __future__ import annotations
+
+import argparse
+import itertools
+import json
+import os
+import subprocess
+import sys
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXP_ROOT = os.path.join(REPO, "experiments")
+
+
+def load_experiments(which: str):
+    if which == "all":
+        names = sorted(d for d in os.listdir(EXP_ROOT)
+                       if os.path.isfile(os.path.join(EXP_ROOT, d, "config.json")))
+    else:
+        names = [which]
+    out = []
+    for name in names:
+        path = os.path.join(EXP_ROOT, name, "config.json")
+        if not os.path.isfile(path):
+            raise SystemExit(f"no config.json in experiments/{name} "
+                             f"(available: {os.listdir(EXP_ROOT)})")
+        with open(path) as f:
+            out.append((name, json.load(f)))
+    return out
+
+
+def run_one(job):
+    (name, cfg, scheme, seed, steps, seeds_note, gpu, nice) = job
+    exp_dir = os.path.join(EXP_ROOT, name)
+    results_dir = os.path.join(exp_dir, "results")
+    logs_dir = os.path.join(exp_dir, "logs")
+    run_name = f"{cfg['env_id']}__{scheme}__{cfg.get('priority_mode','lazy')}__seed{seed}"
+    out_path = os.path.join(results_dir, run_name + ".json")
+    if os.path.exists(out_path):
+        return f"skip  {name}/{run_name}"
+    device = "cuda" if gpu is not None else "auto"
+    cmd = [
+        sys.executable, "-m", "rl_buffer.sac",
+        "--env-id", cfg["env_id"],
+        "--env-kwargs", json.dumps(cfg.get("env_kwargs", {})),
+        "--scheme", scheme,
+        "--priority-mode", cfg.get("priority_mode", "lazy"),
+        "--seed", str(seed),
+        "--total-steps", str(steps),
+        "--learning-starts", str(cfg.get("learning_starts", 5000)),
+        "--eval-frequency", str(cfg.get("eval_frequency", 10000)),
+        "--eval-episodes", str(cfg.get("eval_episodes", 10)),
+        "--torch-threads", "1",
+        "--out-dir", results_dir,
+        "--log-dir", logs_dir,
+        "--device", device,
+    ]
+    if nice:
+        cmd = ["nice", "-n", str(nice)] + cmd
+    env_vars = dict(os.environ, PYTHONPATH=REPO, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
+    if gpu is not None:
+        env_vars["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    t0 = time.time()
+    r = subprocess.run(cmd, cwd=REPO, env=env_vars, capture_output=True, text=True)
+    dt = time.time() - t0
+    tag = f"gpu{gpu}" if gpu is not None else "cpu"
+    if r.returncode != 0:
+        return f"FAIL  {name}/{run_name} [{tag}]  ({dt:.0f}s)\n{r.stderr[-800:]}"
+    return f"done  {name}/{run_name} [{tag}]  ({dt:.0f}s)"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--env", required=True,
+                    help="experiment folder name under experiments/, or 'all'")
+    ap.add_argument("--workers", type=str, default="auto",
+                    help="concurrent runs, or 'auto' = cpu_count-2")
+    ap.add_argument("--gpus", type=str, default="",
+                    help="comma-separated GPU ids to round-robin (usually leave empty: CPU wins here)")
+    ap.add_argument("--nice", type=int, default=0)
+    ap.add_argument("--seeds", type=str, default="",
+                    help="override seeds, e.g. '1,2,3' (default: config.json)")
+    ap.add_argument("--steps", type=int, default=0,
+                    help="override total_steps for every env (default: config.json)")
+    ap.add_argument("--schemes", type=str, default="",
+                    help="override schemes, e.g. 'uniform,precond'")
+    args = ap.parse_args()
+
+    workers = max(1, (os.cpu_count() or 4) - 2) if args.workers == "auto" else int(args.workers)
+    gpus = [int(g) for g in args.gpus.split(",") if g.strip() != ""]
+    seed_override = [int(s) for s in args.seeds.split(",") if s.strip() != ""]
+    scheme_override = [s for s in args.schemes.split(",") if s.strip() != ""]
+
+    jobs = []
+    for name, cfg in load_experiments(args.env):
+        os.makedirs(os.path.join(EXP_ROOT, name, "results"), exist_ok=True)
+        os.makedirs(os.path.join(EXP_ROOT, name, "logs"), exist_ok=True)
+        seeds = seed_override or cfg.get("seeds", list(range(1, 11)))
+        schemes = scheme_override or cfg.get("schemes",
+                    ["uniform", "per", "euclid", "precond", "precond2"])
+        steps = args.steps or cfg["total_steps"]
+        for scheme, seed in itertools.product(schemes, seeds):
+            jobs.append((name, cfg, scheme, seed, steps, None, None, args.nice))
+
+    # round-robin GPUs across the flat job list
+    if gpus:
+        jobs = [j[:6] + (gpus[i % len(gpus)], j[7]) for i, j in enumerate(jobs)]
+
+    where = f"gpus={gpus}" if gpus else "cpu"
+    print(f"env={args.env} jobs={len(jobs)} workers={workers} {where} "
+          f"nice={args.nice} cores={os.cpu_count()}", flush=True)
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        for msg in ex.map(run_one, jobs):
+            print(msg, flush=True)
+    print("experiments complete", flush=True)
+
+
+if __name__ == "__main__":
+    main()
