@@ -328,11 +328,15 @@ def main():
         grad_evals += 1
 
         # refresh priorities (lazy scheme) -------------------------------
+        # Reuse the update's own TD residuals (standard PER practice, Schaul et
+        # al. 2016) rather than recomputing the target after the step: saves the
+        # ~5 network forwards of critic_deltas per update. Priorities are thus at
+        # pre-update params while the ghost-norm D reads post-update Adam state --
+        # both within the lazy scheme's one-visit staleness approximation.
         if cfg.is_prioritized and cfg.priority_mode == "lazy":
-            with torch.no_grad():
-                d1n, d2n, _ = critic_deltas(actor, qf1, qf2, qf1_t, qf2_t, alpha, args.gamma, batch)
             prio = compute_priorities(cfg.scheme, cfg, qf1, qf2, q_optimizer,
-                                      critic_params, obs_b, act_b, d1n, d2n)
+                                      critic_params, obs_b, act_b,
+                                      delta1.detach(), delta2.detach())
             buf.update_priorities(idxs, prio)
 
         # --- actor + temperature (same w, per-sample, shape-checked) -----
