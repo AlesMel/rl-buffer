@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -129,10 +129,30 @@ def main():
     where = f"gpus={gpus} ({workers//max(1,len(gpus))}/gpu)" if gpus else "cpu"
     print(f"preset={args.preset} jobs={len(jobs)} workers={workers} {where} "
           f"nice={args.nice} cores={os.cpu_count()} out={args.out_dir}", flush=True)
+    pbar = None
+    try:
+        from tqdm import tqdm
+        pbar = tqdm(total=len(jobs), desc=f"sweep[{args.preset}]", unit="run",
+                    dynamic_ncols=True, smoothing=0.0)
+    except ImportError:
+        pass
+    n_done = n_skip = n_fail = 0
     with ProcessPoolExecutor(max_workers=workers) as ex:
-        for msg in ex.map(run_one, jobs):
-            print(msg, flush=True)
-    print("sweep complete", flush=True)
+        futures = [ex.submit(run_one, j) for j in jobs]
+        for fut in as_completed(futures):        # report in completion order
+            msg = fut.result()
+            n_done += msg.startswith("done")
+            n_skip += msg.startswith("skip")
+            n_fail += msg.startswith("FAIL")
+            if pbar is not None:
+                pbar.write(msg)
+                pbar.set_postfix(done=n_done, skip=n_skip, fail=n_fail, refresh=False)
+                pbar.update(1)
+            else:
+                print(msg, flush=True)
+    if pbar is not None:
+        pbar.close()
+    print(f"sweep complete: {n_done} done, {n_skip} skipped, {n_fail} failed", flush=True)
 
 
 if __name__ == "__main__":
