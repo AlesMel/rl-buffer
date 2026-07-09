@@ -113,7 +113,8 @@ def main():
     ap.add_argument("--workers", type=str, default="auto",
                     help="concurrent runs, or 'auto' = cpu_count-2")
     ap.add_argument("--gpus", type=str, default="",
-                    help="comma-separated GPU ids to round-robin (usually leave empty: CPU wins here)")
+                    help="comma-separated GPU ids to round-robin; run scripts/bench_device.py "
+                         "to measure whether cpu or cuda is faster on your hardware")
     ap.add_argument("--nice", type=int, default=0)
     ap.add_argument("--seeds", type=str, default="",
                     help="override seeds, e.g. '1,2,3' (default: config.json)")

@@ -90,7 +90,9 @@ PYTHONPATH=. python tests/test_buffers.py
 PYTHONPATH=. python -m rl_buffer.sac --env-id HalfCheetah-v4 --scheme precond --seed 1
 tensorboard --logdir logs        # losses, eval/return, and IS-weight diagnostics
 
-# force CPU on a GPU box (small-net single-env SAC is usually faster on CPU)
+# device is hardware-dependent (latency-bound workload) — measure, don't guess:
+#   python scripts/bench_device.py        # cpu-vs-cuda steps/s table per scheme
+# then force a device if the default (auto) picks the slower one:
 PYTHONPATH=. CUDA_VISIBLE_DEVICES="" python -m rl_buffer.sac --scheme precond --seed 1
 
 # reduced pilot on this box, then the full cluster protocol
@@ -107,7 +109,9 @@ python analysis/rliable_analysis.py --results-dir experiments/*/results --fig-di
 # so cores beat GPUs here. 'auto' = cpu_count-2; --nice keeps the box responsive.
 python scripts/run_sweep.py --preset full --workers auto --nice 10 --out-dir results/full
 
-# (optional) pack runs across GPUs instead — usually NOT faster for this workload:
+# or pack runs across GPUs — whether this beats CPU is hardware-dependent
+# (a 5090 measured ~2x faster per run than one CPU core); check bench_device.py
+# and note each GPU run still consumes ~1 CPU core for the env simulation:
 python scripts/run_sweep.py --preset full --gpus 0,1 --workers 16 --out-dir results/full
 
 # aggregate + figures
