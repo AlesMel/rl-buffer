@@ -7,9 +7,11 @@ importance weight is attached to each draw.
 Sampling schemes (``SamplingConfig.scheme``):
     uniform  : p_i propto 1
     per      : p_i propto |delta_i|^alpha           (TD-error proxy; PER)
-    euclid   : p_i propto ||g_i||_2^alpha           (D^0 gradient norm)
-    precond  : p_i propto ||g_i||_{D^-1}^alpha       (ours)
-    precond2 : p_i propto ||g_i||_{D^-2}^alpha       (metric sanity)
+    euclid       : p_i propto ||g_i||_2^alpha           (D^0 gradient norm)
+    precond      : p_i propto ||g_i||_{D^-1}^alpha       (ours)
+    precond2     : p_i propto ||g_i||_{D^-2}^alpha       (metric sanity)
+    precond_clip : p_i propto ||g_i||_{D'^-1}^alpha      (D' = max(D, 1): inverse
+                   metric capped at 1, robustified precond)
 
 Priority maintenance:
     lazy      : sum-tree priorities per entry, refreshed only for sampled
@@ -106,7 +108,7 @@ class MinTree:
 
 @dataclass
 class SamplingConfig:
-    scheme: str = "uniform"          # uniform | per | euclid | precond | precond2
+    scheme: str = "uniform"          # uniform | per | euclid | precond | precond2 | precond_clip
     alpha: float = 0.6               # priority exponent (PER default)
     beta0: float = 0.4               # IS-weight exponent start (lazy scheme)
     beta1: float = 1.0               # IS-weight exponent end (anneal to 1)
@@ -132,13 +134,18 @@ class SamplingConfig:
     normalize_mode: str = "clip"     # clip | global | batch | none
     weight_clip: float = 10.0        # constant cap C for normalize_mode='clip'
     metric_power: int = field(init=False, default=0)
+    # precond_clip: D' = max(D, 1), i.e. the inverse metric is capped at 1
+    # (M = min(D^-1, 1)); otherwise identical to precond.
+    metric_clip: bool = field(init=False, default=False)
 
     def __post_init__(self):
-        self.metric_power = {"euclid": 0, "precond": 1, "precond2": 2}.get(self.scheme, 0)
+        self.metric_power = {"euclid": 0, "precond": 1, "precond2": 2,
+                             "precond_clip": 1}.get(self.scheme, 0)
+        self.metric_clip = self.scheme == "precond_clip"
 
     @property
     def is_gradient_scheme(self) -> bool:
-        return self.scheme in ("euclid", "precond", "precond2")
+        return self.scheme in ("euclid", "precond", "precond2", "precond_clip")
 
     @property
     def is_prioritized(self) -> bool:

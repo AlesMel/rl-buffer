@@ -1,7 +1,7 @@
 """SAC with a single knob: the replay-buffer sampling scheme.
 
 Faithful to CleanRL's ``sac_continuous_action.py`` (same networks, same default
-hyperparameters).  The only change is that a minibatch is drawn under one of five
+hyperparameters).  The only change is that a minibatch is drawn under one of six
 schemes and the resulting importance weight ``w_i = 1/(N p_i)`` is applied to the
 critic, actor, AND temperature per-sample losses so all three remain unbiased
 estimators of the uniform-buffer objectives.
@@ -36,7 +36,7 @@ def parse_args():
     p.add_argument("--env-kwargs", type=str, default="{}",
                    help='JSON kwargs for gym.make, e.g. \'{"continuous": true}\' for LunarLander-v3')
     p.add_argument("--scheme", type=str, default="uniform",
-                   choices=["uniform", "per", "euclid", "precond", "precond2"])
+                   choices=["uniform", "per", "euclid", "precond", "precond2", "precond_clip"])
     p.add_argument("--priority-mode", type=str, default="lazy", choices=["lazy", "two_stage"])
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--total-steps", type=int, default=1_000_000)
@@ -118,6 +118,7 @@ def compute_priorities(scheme, cfg, qf1, qf2, q_optimizer, critic_params,
 
     ``per``     -> sqrt(delta1^2 + delta2^2)                       (Jacobian == 1)
     gradient    -> sqrt(||g1||_M^2 + ||g2||_M^2)  with M = D^{-power}
+                   (precond_clip additionally caps the inverse metric at 1)
     ``priority_source == 'q1'`` restricts to critic-1 only.
     """
     if scheme == "per":
@@ -129,11 +130,12 @@ def compute_priorities(scheme, cfg, qf1, qf2, q_optimizer, critic_params,
 
     # gradient schemes need the Adam preconditioner
     D = adam_diag_preconditioner(q_optimizer, critic_params)
-    n1 = per_sample_priority(qf1, delta1, obs, actions, D, cfg.metric_power)  # (B,)
+    clip_d = cfg.metric_clip
+    n1 = per_sample_priority(qf1, delta1, obs, actions, D, cfg.metric_power, clip_d=clip_d)  # (B,)
     if cfg.__dict__.get("priority_source", "both") == "q1":
         prio = n1
     else:
-        n2 = per_sample_priority(qf2, delta2, obs, actions, D, cfg.metric_power)
+        n2 = per_sample_priority(qf2, delta2, obs, actions, D, cfg.metric_power, clip_d=clip_d)
         prio = torch.sqrt(n1 ** 2 + n2 ** 2)
     return prio.reshape(-1).cpu().numpy()
 

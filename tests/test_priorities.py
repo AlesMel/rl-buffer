@@ -23,12 +23,34 @@ def test_ghost_norm_matches_vmap():
     a = torch.randn(B, act_dim)
     D = _random_D(critic, rng)
 
-    for power in (0, 1, 2):
-        ghost = GhostNormCalculator(critic, power).grad_norm(s, a, D)
-        truth = per_sample_grad_norm_vmap(critic, s, a, D, power)
+    for power, clip_d in ((0, False), (1, False), (2, False), (1, True), (2, True)):
+        ghost = GhostNormCalculator(critic, power, clip_d=clip_d).grad_norm(s, a, D)
+        truth = per_sample_grad_norm_vmap(critic, s, a, D, power, clip_d=clip_d)
         assert ghost.shape == (B,)
         assert torch.allclose(ghost, truth, rtol=1e-4, atol=1e-5), (
-            f"power={power} max abs diff {(ghost - truth).abs().max().item():.2e}")
+            f"power={power} clip_d={clip_d} max abs diff {(ghost - truth).abs().max().item():.2e}")
+
+
+def test_clip_d_caps_inverse_metric():
+    """D' = max(D, 1): with all d_i < 1 the clipped metric equals euclid (R = 1);
+    with all d_i > 1 the clip is a no-op and it equals plain precond."""
+    torch.manual_seed(2)
+    obs_dim, act_dim, B = 5, 2, 16
+    critic = SoftQNetwork(obs_dim, act_dim)
+    s = torch.randn(B, obs_dim)
+    a = torch.randn(B, act_dim)
+
+    # all d_i < 1 -> clip raises every d to 1 -> identical to euclid (power 0)
+    D_small = {p: torch.full_like(p, 0.05) for p in critic.parameters()}
+    clipped = GhostNormCalculator(critic, 1, clip_d=True).grad_norm(s, a, D_small)
+    euclid = GhostNormCalculator(critic, 0).grad_norm(s, a, D_small)
+    assert torch.allclose(clipped, euclid, rtol=1e-5, atol=1e-6)
+
+    # all d_i > 1 -> clip is a no-op -> identical to plain precond (power 1)
+    D_big = {p: torch.full_like(p, 3.0) for p in critic.parameters()}
+    clipped = GhostNormCalculator(critic, 1, clip_d=True).grad_norm(s, a, D_big)
+    precond = GhostNormCalculator(critic, 1).grad_norm(s, a, D_big)
+    assert torch.allclose(clipped, precond, rtol=1e-5, atol=1e-6)
 
 
 def test_priority_factorization():
@@ -51,4 +73,5 @@ def test_priority_factorization():
 if __name__ == "__main__":
     test_ghost_norm_matches_vmap()
     test_priority_factorization()
+    test_clip_d_caps_inverse_metric()
     print("test_priorities OK")

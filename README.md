@@ -25,6 +25,7 @@ Jacobian-norm factor in some metric `M`:
 | `euclid`   | `|δ_i|·‖∇Q_i‖₂`                     | `D⁰ = I`  | SGD (un-preconditioned) variance |
 | `precond`  | `|δ_i|·‖∇Q_i‖_{D⁻¹}` **(ours)**     | `D⁻¹`     | **Adam (preconditioned) variance** |
 | `precond2` | `|δ_i|·‖∇Q_i‖_{D⁻²}`                | `D⁻²`     | (metric sanity — should lose) |
+| `precond_clip` | `|δ_i|·‖∇Q_i‖_{D′⁻¹}`           | `D′⁻¹ = min(D⁻¹, 1)` with `D′ = max(D, 1)` | robustified precond: inverse metric capped at 1, so near-zero-`v̂` coordinates stop dominating |
 
 `D = diag(√v̂ + ε)` is Adam's diagonal preconditioner (bias-corrected second
 moment), read live from the optimizer state each update. PER is the special case

@@ -10,14 +10,19 @@ For the squared soft-Bellman residual the target ``y_i`` is stop-gradient, so
 
     ||g_i||_M = |delta_i| * ||grad_theta Q(s_i, a_i)||_M .
 
-We support three metrics, all diagonal in the Adam preconditioner
+We support four metrics, all diagonal in the Adam preconditioner
 ``D = diag(sqrt(v_hat) + eps)``:
 
-    euclid   (D^0 ) : M = I                       -> optimal for SGD variance
-    precond  (D^-1) : M = D^-1  (ours)            -> optimal for Adam variance
-    precond2 (D^-2) : M = D^-2  (metric sanity)   -> double-counts D, should lose
+    euclid       (D^0  ) : M = I                     -> optimal for SGD variance
+    precond      (D^-1 ) : M = D^-1  (ours)          -> optimal for Adam variance
+    precond2     (D^-2 ) : M = D^-2  (metric sanity) -> double-counts D, should lose
+    precond_clip (D'^-1) : M = D'^-1 with D' = max(D, 1), i.e. the inverse metric
+                           is capped at 1: M = min(D^-1, 1).  Robustified precond:
+                           coordinates with near-zero v_hat (huge Adam steps) stop
+                           dominating the norm.
 
-The generic diagonal metric is ``M = D^{-power}`` with power in {0, 1, 2}.
+The generic diagonal metric is ``M = D^{-power}`` with power in {0, 1, 2}; the
+clipped variant additionally clamps ``D`` at 1 from below before inverting.
 
 Efficiency: we never materialise per-sample parameter gradients (B x P).  Instead
 we use the *weighted ghost-norm* trick.  For a linear layer ``z = W a + b`` whose
@@ -81,17 +86,23 @@ class GhostNormCalculator:
     """Compute per-sample ``||grad_theta Q(s,a)||_M`` for a SoftQNetwork.
 
     ``metric_power`` selects M = D^{-power}: 0 -> euclid, 1 -> precond, 2 -> precond2.
+    ``clip_d`` replaces D with D' = max(D, 1), capping the inverse metric at 1
+    (precond_clip when combined with power 1).
     """
 
-    def __init__(self, critic, metric_power: int):
+    def __init__(self, critic, metric_power: int, clip_d: bool = False):
         assert metric_power in (0, 1, 2)
         self.critic = critic
         self.metric_power = metric_power
+        self.clip_d = clip_d
 
     def _inv_metric(self, D_w: torch.Tensor, D_b: torch.Tensor):
         """R = D^{-power} for weight and bias (elementwise)."""
         if self.metric_power == 0:
             return torch.ones_like(D_w), torch.ones_like(D_b)
+        if self.clip_d:
+            D_w = D_w.clamp(min=1.0)
+            D_b = D_b.clamp(min=1.0)
         R_w = D_w.pow(-self.metric_power)
         r_b = D_b.pow(-self.metric_power)
         return R_w, r_b
@@ -137,9 +148,10 @@ class GhostNormCalculator:
 
 
 def per_sample_priority(critic, delta: torch.Tensor, s: torch.Tensor, a: torch.Tensor,
-                        D: Dict[torch.nn.Parameter, torch.Tensor], metric_power: int) -> torch.Tensor:
+                        D: Dict[torch.nn.Parameter, torch.Tensor], metric_power: int,
+                        clip_d: bool = False) -> torch.Tensor:
     """||g_i||_M = |delta_i| * ||grad Q(s_i,a_i)||_M, returned as a 1-D (B,) tensor."""
-    calc = GhostNormCalculator(critic, metric_power)
+    calc = GhostNormCalculator(critic, metric_power, clip_d=clip_d)
     jac_norm = calc.grad_norm(s, a, D)                       # (B,)
     delta = delta.reshape(-1)
     assert delta.shape == jac_norm.shape, (delta.shape, jac_norm.shape)
@@ -147,7 +159,8 @@ def per_sample_priority(critic, delta: torch.Tensor, s: torch.Tensor, a: torch.T
 
 
 def per_sample_grad_norm_vmap(critic, s: torch.Tensor, a: torch.Tensor,
-                              D: Dict[torch.nn.Parameter, torch.Tensor], metric_power: int) -> torch.Tensor:
+                              D: Dict[torch.nn.Parameter, torch.Tensor], metric_power: int,
+                              clip_d: bool = False) -> torch.Tensor:
     """Ground-truth per-sample ``||grad Q||_M`` via torch.func (materialises grads).
 
     Used only in tests to validate :class:`GhostNormCalculator`.  This is the
@@ -172,6 +185,8 @@ def per_sample_grad_norm_vmap(critic, s: torch.Tensor, a: torch.Tensor,
         if metric_power == 0:
             R = torch.ones_like(Dp)
         else:
+            if clip_d:
+                Dp = Dp.clamp(min=1.0)
             R = Dp.pow(-metric_power)
         g2 = g * g                                           # (B, *param_shape)
         weighted = g2 * R.unsqueeze(0)
